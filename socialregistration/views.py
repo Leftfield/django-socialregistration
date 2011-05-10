@@ -20,7 +20,8 @@ from django.contrib.sites.models import Site
 from socialregistration.forms import UserForm
 from socialregistration.utils import (OAuthClient, OAuthTwitter,
     OpenID, _https, DiscoveryFailure)
-from socialregistration.models import FacebookProfile, TwitterProfile, OpenIDProfile
+from socialregistration.models import FacebookProfile, TwitterProfile, OpenIDProfile, TwitterRequestToken, TwitterAccessToken, FacebookAccessToken
+    
 from socialregistration import signals 
 
 
@@ -51,6 +52,25 @@ def _login(request, user, profile, client):
                                   client = client)
 
 def _connect(user, profile, client):
+    if isinstance(profile,FacebookProfile):
+        perms = getattr(settings,'FACEBOOK_REQUEST_PERMISSIONS','')
+        if 'offline_access' in perms:
+            try:
+                FacebookAccessToken.objects.get(facebook_profile=profile).remove()
+            except FacebookAccessToken.DoesNotExist:
+                pass
+            FacebookAccessToken.objects.create(facebook_profile=profile,access_token=client.graph.access_token)
+            
+    elif isinstance(profile,TwitterProfile):
+        try:
+            TwitterRequestToken.objects.get(twitter_profile=profile).remove()
+        except TwitterRequestToken.DoesNotExist:
+            pass
+            
+        rt = TwitterRequestToken.objects.create(twitter_profile=profile,oauth_token=client.request_token['oauth_token'],oauth_token_secret=client.request_token['oauth_token_secret'])
+        at = TwitterAccessToken.objects.create(request_token=rt,oauth_token=client.access_token['oauth_token'],oauth_token_secret=client.access_token['oauth_token_secret'])
+        
+        
     signals.connect.send(sender = profile.__class__,
                                     user = user,
                                     profile = profile,
@@ -162,6 +182,7 @@ def facebook_connect(request, template='socialregistration/facebook.html',
     except FacebookProfile.DoesNotExist:
         profile = FacebookProfile.objects.create(user=request.user,
             uid=request.facebook.uid)
+            
         _connect(request.user, profile, request.facebook)
 
     return HttpResponseRedirect(_get_next(request))
@@ -199,7 +220,7 @@ def twitter(request, account_inactive_template='socialregistration/account_inact
             profile = TwitterProfile.objects.get(twitter_id=user_info['id'])
         except TwitterProfile.DoesNotExist: # There can only be one profile!
             profile = TwitterProfile.objects.create(user=request.user, twitter_id=user_info['id'])
-            _connect(user, profile, client)
+            _connect(request.user, profile, client)
 
         return HttpResponseRedirect(_get_next(request))
 
